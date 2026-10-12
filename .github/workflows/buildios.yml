@@ -1,54 +1,112 @@
-name: Build iOS Unsigned IPA
+name: Build unsigned IPA
 
+# Runs on GitHub's own macOS machines, so you don't need a Mac.
 on:
-  workflow_dispatch: # Allows you to manually trigger the build from the browser
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  SCHEME: Madeira
+  CONFIGURATION: Release
 
 jobs:
   build:
-    runs-on: macos-14 # Runs on GitHub's native cloud macOS environment
-    
+    runs-on: macos-latest
+    timeout-minutes: 60
+
     steps:
-      - name: Checkout Source Code
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive   # harmless if you have none
 
-      - name: Select Xcode Version
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-
-      - name: Fetch Microsoft VCRuntime Dependency
+      # To pin a specific Xcode, add before the build step:
+      #   - run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - name: Show toolchain
         run: |
-          # Madeira requires pulling the runtime DLL libraries prior to building
-          cd tools && chmod +x fetch-vcruntime.md || true
-          # Note: If Madeira uses a specific fetch script (e.g. fetch-vcruntime.sh), run it here:
-          # ./fetch-vcruntime.sh
-          cd ..
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Compile Application (Bypass Code Signing)
+      # Only runs if the repo uses XcodeGen (project.yml) instead of a committed .xcodeproj
+      - name: Generate Xcode project (XcodeGen)
         run: |
-          xcodebuild archive \
-            -workspace Madeira.xcworkspace \
-            -scheme Madeira \
-            -configuration Release \
-            -archivePath build/Madeira.xcarchive \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+          PROJECT_YML=$(find . -name project.yml -not -path '*/node_modules/*' -not -path '*/Pods/*' | head -n 1)
+          if [ -n "$PROJECT_YML" ]; then
+            brew install xcodegen
+            (cd "$(dirname "$PROJECT_YML")" && xcodegen generate)
+          else
+            echo "No project.yml found, skipping XcodeGen"
+          fi
+
+      # Only runs if there is a Podfile
+      - name: Install CocoaPods dependencies
+        run: |
+          PODFILE=$(find . -name Podfile -not -path '*/Pods/*' | head -n 1)
+          if [ -n "$PODFILE" ]; then
+            (cd "$(dirname "$PODFILE")" && pod install)
+          else
+            echo "No Podfile found, skipping CocoaPods"
+          fi
+
+      - name: Locate workspace / project
+        id: find
+        run: |
+          WS=$(find . -maxdepth 4 -name '*.xcworkspace' -not -path '*/Pods/*' -not -path '*.xcodeproj/*' | head -n 1)
+          PROJ=$(find . -maxdepth 4 -name '*.xcodeproj' -not -path '*/Pods/*' | head -n 1)
+          if [ -n "$WS" ]; then
+            echo "flag=-workspace" >> "$GITHUB_OUTPUT"
+            echo "path=$WS" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PROJ" ]; then
+            echo "flag=-project" >> "$GITHUB_OUTPUT"
+            echo "path=$PROJ" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No .xcworkspace or .xcodeproj found"
+            exit 1
+          fi
+          echo "Using: $WS $PROJ"
+
+      - name: Build (no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            ${{ steps.find.outputs.flag }} "${{ steps.find.outputs.path }}" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee xcodebuild.log
 
-      - name: Package Raw Binary into IPA Layout
+      - name: Package unsigned IPA
         run: |
-          # Create the mandatory IPA directory hierarchy
-          mkdir -p build/Payload
-          
-          # Extract the compiled .app envelope from the xcode archive
-          cp -R build/Madeira.xcarchive/Products/Applications/Madeira.app build/Payload/
-          
-          # Compress the Payload directory into a valid zip archive, mapped to .ipa extension
-          cd build
-          zip -r Madeira-Unsigned.ipa Payload
-          
-      - name: Upload Unsigned IPA Artifact
+          APP=$(find build/Build/Products -maxdepth 2 -name '*.app' -path '*iphoneos*' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app produced"
+            exit 1
+          fi
+          echo "Packaging $APP"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry "$SCHEME-unsigned.ipa" Payload
+          ls -lh "$SCHEME-unsigned.ipa"
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Madeira-Unsigned-IPA
-          path: build/Madeira-Unsigned.ipa
-          retention-days: 5
+          name: ${{ env.SCHEME }}-unsigned-ipa
+          path: ${{ env.SCHEME }}-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
