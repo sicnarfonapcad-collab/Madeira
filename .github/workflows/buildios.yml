@@ -1,6 +1,5 @@
 name: Build unsigned IPA
 
-# Runs on GitHub's own macOS machines, so you don't need a Mac.
 on:
   push:
     branches: [main]
@@ -9,7 +8,7 @@ on:
 
 env:
   SCHEME: Madeira
-  CONFIGURATION: Release
+  CONFIGURATION: Debug
 
 jobs:
   build:
@@ -20,63 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive   # harmless if you have none
+          submodules: recursive
 
-      # To pin a specific Xcode, add before the build step:
-      #   - run: sudo xcode-select -s /Applications/Xcode_16.4.app
       - name: Show toolchain
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      # Only runs if the repo uses XcodeGen (project.yml) instead of a committed .xcodeproj
-      - name: Generate Xcode project (XcodeGen)
-        run: |
-          PROJECT_YML=$(find . -name project.yml -not -path '*/node_modules/*' -not -path '*/Pods/*' | head -n 1)
-          if [ -n "$PROJECT_YML" ]; then
-            brew install xcodegen
-            (cd "$(dirname "$PROJECT_YML")" && xcodegen generate)
-          else
-            echo "No project.yml found, skipping XcodeGen"
-          fi
+      - name: Stage bundled license files
+        run: bash build/stage-licenses.sh
 
-      # Only runs if there is a Podfile
-      - name: Install CocoaPods dependencies
-        run: |
-          PODFILE=$(find . -name Podfile -not -path '*/Pods/*' | head -n 1)
-          if [ -n "$PODFILE" ]; then
-            (cd "$(dirname "$PODFILE")" && pod install)
-          else
-            echo "No Podfile found, skipping CocoaPods"
-          fi
-
-      - name: Locate workspace / project
-        id: find
-        run: |
-          WS=$(find . -maxdepth 4 -name '*.xcworkspace' -not -path '*/Pods/*' -not -path '*.xcodeproj/*' | head -n 1)
-          PROJ=$(find . -maxdepth 4 -name '*.xcodeproj' -not -path '*/Pods/*' | head -n 1)
-          if [ -n "$WS" ]; then
-            echo "flag=-workspace" >> "$GITHUB_OUTPUT"
-            echo "path=$WS" >> "$GITHUB_OUTPUT"
-          elif [ -n "$PROJ" ]; then
-            echo "flag=-project" >> "$GITHUB_OUTPUT"
-            echo "path=$PROJ" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::No .xcworkspace or .xcodeproj found"
-            exit 1
-          fi
-          echo "Using: $WS $PROJ"
-
-      - name: Build (no code signing)
+      - name: Build app without code signing
         run: |
           set -o pipefail
           xcodebuild build \
-            ${{ steps.find.outputs.flag }} "${{ steps.find.outputs.path }}" \
+            -project app/Madeira.xcodeproj \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -84,23 +46,25 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
-          APP=$(find build/Build/Products -maxdepth 2 -name '*.app' -path '*iphoneos*' | head -n 1)
-          if [ -z "$APP" ]; then
-            echo "::error::No .app produced"
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/${CONFIGURATION}-iphoneos/$SCHEME.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Expected app was not produced at $APP"
             exit 1
           fi
-          echo "Packaging $APP"
-          rm -rf Payload
-          mkdir Payload
-          cp -R "$APP" Payload/
-          zip -qry "$SCHEME-unsigned.ipa" Payload
+          if [ -f "$APP/embedded.mobileprovision" ]; then
+            echo "::error::An embedded provisioning profile was found; refusing to package a signed IPA"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/$SCHEME-unsigned.ipa" Payload)
           ls -lh "$SCHEME-unsigned.ipa"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.SCHEME }}-unsigned-ipa
-          path: ${{ env.SCHEME }}-unsigned.ipa
+          name: Madeira-unsigned-ipa
+          path: Madeira-unsigned.ipa
           if-no-files-found: error
 
       - name: Upload build log
