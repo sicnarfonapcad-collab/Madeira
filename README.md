@@ -92,10 +92,11 @@ manual dispatches. In the repository's **Actions** tab, select the workflow
 and choose **Run workflow** to build the selected branch. Download the
 `Madeira-unsigned-ipa` artifact from the completed run, then sign it with your
 own Apple ID when sideloading. The workflow needs no Apple signing credentials
-and uses the repository's Debug build settings. It packages the app target but
-does not rebuild its native dependencies; a clean checkout is missing some
-required inputs, as documented in [`docs/BUILDING.md`](docs/BUILDING.md), so
-those must be supplied before the workflow can complete successfully.
+and uses the repository's Debug build settings. It builds FEX's iOS libraries
+before the app, but does not rebuild all native dependencies; a clean checkout
+is missing some required inputs, as documented in
+[`docs/BUILDING.md`](docs/BUILDING.md), so those must be supplied before the
+workflow can complete successfully.
 
 ### Repository layout
 

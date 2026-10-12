@@ -29,6 +29,9 @@ jobs:
       - name: Stage bundled license files
         run: bash build/stage-licenses.sh
 
+      - name: Build FEX iOS libraries
+        run: bash build/fex-ios/build.sh
+
       - name: Build app without code signing
         run: |
           set -o pipefail
