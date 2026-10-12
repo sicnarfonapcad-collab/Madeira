@@ -1,0 +1,54 @@
+name: Build iOS Unsigned IPA
+
+on:
+  workflow_dispatch: # Allows you to manually trigger the build from the browser
+
+jobs:
+  build:
+    runs-on: macos-14 # Runs on GitHub's native cloud macOS environment
+    
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Fetch Microsoft VCRuntime Dependency
+        run: |
+          # Madeira requires pulling the runtime DLL libraries prior to building
+          cd tools && chmod +x fetch-vcruntime.md || true
+          # Note: If Madeira uses a specific fetch script (e.g. fetch-vcruntime.sh), run it here:
+          # ./fetch-vcruntime.sh
+          cd ..
+
+      - name: Compile Application (Bypass Code Signing)
+        run: |
+          xcodebuild archive \
+            -workspace Madeira.xcworkspace \
+            -scheme Madeira \
+            -configuration Release \
+            -archivePath build/Madeira.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package Raw Binary into IPA Layout
+        run: |
+          # Create the mandatory IPA directory hierarchy
+          mkdir -p build/Payload
+          
+          # Extract the compiled .app envelope from the xcode archive
+          cp -R build/Madeira.xcarchive/Products/Applications/Madeira.app build/Payload/
+          
+          # Compress the Payload directory into a valid zip archive, mapped to .ipa extension
+          cd build
+          zip -r Madeira-Unsigned.ipa Payload
+          
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Madeira-Unsigned-IPA
+          path: build/Madeira-Unsigned.ipa
+          retention-days: 5
