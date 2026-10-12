@@ -85,6 +85,18 @@ own forks; upstream checkouts will not build here. The build has several parts
 and some inputs that are not in the repository, such as the toolchains.
 [`docs/BUILDING.md`](docs/BUILDING.md) walks through all of it.
 
+### Build an unsigned IPA with GitHub Actions
+
+The **Build unsigned IPA** workflow runs on pushes to `main`, pull requests and
+manual dispatches. In the repository's **Actions** tab, select the workflow
+and choose **Run workflow** to build the selected branch. Download the
+`Madeira-unsigned-ipa` artifact from the completed run, then sign it with your
+own Apple ID when sideloading. The workflow needs no Apple signing credentials
+and uses the repository's Debug build settings. It packages the app target but
+does not rebuild its native dependencies; a clean checkout is missing some
+required inputs, as documented in [`docs/BUILDING.md`](docs/BUILDING.md), so
+those must be supplied before the workflow can complete successfully.
+
 ### Repository layout
 
 | Path | Contents |
