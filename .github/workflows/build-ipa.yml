@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Build unsigned IPA
         shell: bash
@@ -63,7 +65,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            clean build
+            clean build 2>&1 | tee xcodebuild.log
 
           # Package the .app into an IPA
           APP_PATH=$(find "build/Build/Products/${CONFIGURATION}-iphoneos" \
@@ -79,6 +81,20 @@ jobs:
           zip -qry "${SCHEME_NAME}-unsigned.ipa" Payload
 
           ls -lh ./*.ipa
+
+      - name: Show compiler errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "error:|fatal error:" xcodebuild.log | sort -u | head -n 50 || true
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
