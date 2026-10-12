@@ -69,6 +69,21 @@ git-ignored and consumed by the app project.
    -> `app/Madeira/aarch64-windows/xtajit.dll`) and the aarch64 `wow64.dll` /
    `wow64win.dll`; see docs/WOW64.md, "Building". UNVERIFIED on macOS.
 
+## Unsigned IPA GitHub Actions workflow
+
+`.github/workflows/buildios.yml` builds FEX's iOS libraries, then builds and
+packages the unsigned iOS app. Before starting those steps it checks that the
+other app-linked native archives exist in `app/Madeira/`:
+`libwineserver.a`, `libntdll_unix.a`, `libwin32u_unix.a`,
+`libdxmt_combined.a`, `libmadeira_rppairing.a`, `libavformat.a`,
+`libavcodec.a`, `libswresample.a` and `libavutil.a`. They are generated or
+staged by the native build chains above; the clean-checkout workflow does not
+yet bootstrap all of them. In particular, DXMT requires the custom LLVM iOS
+toolchain listed in the inputs table, and wineserver's script requires an
+existing base archive. Until these inputs are built and made available to the
+runner, the workflow intentionally stops at the preflight check and cannot
+produce an IPA.
+
 ## Status of the LGPL relink question
 
 A recipient of a built package can obtain the complete corresponding
